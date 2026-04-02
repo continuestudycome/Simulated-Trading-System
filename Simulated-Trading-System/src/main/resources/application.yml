@@ -1,15 +1,42 @@
-spring:
-    application:
-        name: Simulated-Trading-System
-    datasource:
-        url: jdbc:mysql://localhost:3306/trading?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
-        username: root
-        password: 123456
-        driver-class-name: com.mysql.cj.jdbc.Driver
+server:
+  port: 8080
 
-# mybatis
-mybatis:
+spring:
+  application:
+    name: Simulated-Trading-System
+
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:3306/trading?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    type: com.zaxxer.hikari.HikariDataSource
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      idle-timeout: 30000
+      connection-timeout: 20000
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}     # 同样必须提供
+      database: 0
+      timeout: 5000ms
+      connect-timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 10
+          min-idle: 1
+          time-between-eviction-runs: 10s
+
+# mybatis-plus
+mybatis-plus:
     configuration:
         map-underscore-to-camel-case: true
-        log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # 在控制台打印 MyBatis 执行的 SQL 语句
-    mapper-locations: classpath*:mapper/*.xml # 告诉 Spring 去哪里找 MyBatis 的 XML 映射文件
+        log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    mapper-locations: classpath*:mapper/*.xml
+
+

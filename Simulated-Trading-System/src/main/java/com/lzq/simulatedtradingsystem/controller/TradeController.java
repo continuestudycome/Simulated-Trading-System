@@ -19,7 +19,7 @@ public class TradeController {
 
     // 股票买入/卖出
     @PostMapping
-    public Result<?> createOrder(@RequestBody OrderSaveRequest request) {
+    public Result<String> createOrder(@RequestBody OrderSaveRequest request) {
         try {
             tradeService.createOrder(request);
             return Result.success();

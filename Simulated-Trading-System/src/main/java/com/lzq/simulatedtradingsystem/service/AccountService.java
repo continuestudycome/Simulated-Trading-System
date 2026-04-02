@@ -8,4 +8,8 @@ public interface AccountService {
 
     List<Account> findByUserId(Long id);
 
+    Account getAccountWithCache(Long userId);
+
+    void updateAccount(Account account);
+
 }
