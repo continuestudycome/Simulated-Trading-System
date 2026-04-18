@@ -3,17 +3,28 @@ package com.lzq.simulatedtradingsystem.domain;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.math.BigDecimal;
 
 @Data
 @TableName("account")
-public class Account {  // 账户
+@Schema(description = "用户账户信息")
+public class Account {
     @TableId(type = IdType.AUTO)
-    private Long id; // 账户ID
-    private Long userId; // 用户ID
-    private BigDecimal balance; // 可用余额
-    private BigDecimal frozen; // 冻结金额（下单时冻结的资金）
-    private Integer version;    // 乐观锁版本号，用于并发控制
+    @Schema(description = "账户ID", example = "1")
+    private Long id;
+
+    @Schema(description = "用户ID", example = "1001")
+    private Long userId;
+
+    @Schema(description = "可用余额（元）", example = "100000.00")
+    private BigDecimal balance;
+
+    @Schema(description = "冻结金额（元）", example = "0.00")
+    private BigDecimal frozen;
+
+    @Schema(description = "乐观锁版本号", example = "0")
+    private Integer version;
 }

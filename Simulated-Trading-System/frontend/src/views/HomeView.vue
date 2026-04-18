@@ -58,7 +58,7 @@ const handleSubmit = async () => {
           price: orderForm.price,
           quantity: orderForm.quantity,
           status: orderForm.status,
-          createTime: new Date().toISOString().replace('T', ' ').substring(0, 19)
+          createTime: new Date().toISOString().substring(0, 19)
         })
         ElMessage.success('下单成功')
         handleReset()

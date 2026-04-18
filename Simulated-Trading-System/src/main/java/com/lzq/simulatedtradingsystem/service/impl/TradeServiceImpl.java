@@ -46,6 +46,7 @@ public class TradeServiceImpl implements TradeService {
         if (userId == null || stockCode == null || price == null || quantity == null || type == null) {
             return Result.failure("参数不能为空");
         }
+        // BigDecimal是对象类型，不能用>等运算符直接比较
         if (price.compareTo(BigDecimal.ZERO) <= 0 || quantity <= 0) {
             return Result.failure("价格或数量必须大于0");
         }
