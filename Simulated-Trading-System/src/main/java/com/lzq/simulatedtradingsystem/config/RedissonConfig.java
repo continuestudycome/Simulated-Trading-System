@@ -1,5 +1,6 @@
 package com.lzq.simulatedtradingsystem.config;
 
+import com.lzq.simulatedtradingsystem.utils.SnowflakeIdGenerator;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
@@ -30,5 +31,13 @@ public class RedissonConfig {
                 .setRetryAttempts(3)
                 .setRetryInterval(1500);
         return Redisson.create(config);
+    }
+
+    /**
+     * 雪花ID生成器
+     */
+    @Bean
+    public SnowflakeIdGenerator snowflakeIdGenerator() {
+        return new SnowflakeIdGenerator(1L, 1L);
     }
 }

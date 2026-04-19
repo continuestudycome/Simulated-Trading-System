@@ -10,6 +10,7 @@ import com.lzq.simulatedtradingsystem.mapper.OrderMapper;
 import com.lzq.simulatedtradingsystem.mapper.PositionMapper;
 import com.lzq.simulatedtradingsystem.service.AccountService;
 import com.lzq.simulatedtradingsystem.service.TradeService;
+import com.lzq.simulatedtradingsystem.utils.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -31,6 +32,7 @@ public class TradeServiceImpl implements TradeService {
     private final PositionMapper positionMapper;
     private final RedissonClient redissonClient;
     private final AccountService accountService;
+    private final SnowflakeIdGenerator snowflakeIdGenerator;
 
     @Override
     @Transactional
@@ -62,6 +64,7 @@ public class TradeServiceImpl implements TradeService {
 
         // 创建订单对象
         Order order = new Order();
+        order.setId(snowflakeIdGenerator.nextId());
         order.setUserId(userId);
         order.setStockCode(stockCode);
         order.setPrice(price);

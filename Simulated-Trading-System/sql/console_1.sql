@@ -42,7 +42,10 @@ CREATE TABLE `order` (
   INDEX `idx_user_id` (`user_id`) COMMENT '用户ID索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT '订单表';
 
+-- 修改订单表，去掉自增
+ALTER TABLE `order` MODIFY COLUMN `id` bigint NOT NULL COMMENT '订单ID（雪花算法生成）';
 
+show create table `order`;
 
 -- 清空现有数据（可选，用于测试环境）
 -- TRUNCATE TABLE `order`;
