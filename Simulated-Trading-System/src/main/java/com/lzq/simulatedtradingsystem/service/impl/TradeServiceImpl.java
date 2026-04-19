@@ -46,12 +46,18 @@ public class TradeServiceImpl implements TradeService {
         if (userId == null || stockCode == null || price == null || quantity == null || type == null) {
             return Result.failure("参数不能为空");
         }
-        // BigDecimal是对象类型，不能用>等运算符直接比较
         if (price.compareTo(BigDecimal.ZERO) <= 0 || quantity <= 0) {
             return Result.failure("价格或数量必须大于0");
         }
         if (type != 1 && type != 2) {
             return Result.failure("订单类型错误，1为买入，2为卖出");
+        }
+
+        // 检查用户账户是否存在
+        Account account = accountService.getAccountWithCache(userId);
+        if (account == null) {
+            log.warn("用户 {} 不存在，拒绝交易请求", userId);
+            return Result.failure("用户账户不存在，请先注册");
         }
 
         // 创建订单对象
@@ -71,10 +77,16 @@ public class TradeServiceImpl implements TradeService {
 
             if (type == 1) {
                 // 买入逻辑
-                handleBuyOrder(order);
+                Result<String> buyResult = handleBuyOrder(order);
+                if (!buyResult.isSuccess()) {
+                    return buyResult;
+                }
             } else if (type == 2) {
                 // 卖出逻辑
-                handleSellOrder(order);
+                Result<String> sellResult = handleSellOrder(order);
+                if (!sellResult.isSuccess()) {
+                    return sellResult;
+                }
             }
 
             // 保存订单
@@ -98,28 +110,32 @@ public class TradeServiceImpl implements TradeService {
     /**
      * 处理买入订单的资金校验和冻结
      */
-    private void handleBuyOrder(Order order) {
+    private Result<String> handleBuyOrder(Order order) {
         Account account = accountService.getAccountWithCache(order.getUserId());
+        
+        if (account == null) {
+            return Result.failure("用户账户不存在，请先注册");
+        }
+        
         BigDecimal totalCost = order.getPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
 
         // 风控校验：资金是否充足
         if (account.getBalance().compareTo(totalCost) < 0) {
-            throw new RuntimeException("资金不足");
+            return Result.failure("资金不足，当前余额：" + account.getBalance() + "元");
         }
-
-        // 可选：持仓占比风控
-        // checkPositionRatio(order.getUserId(), order.getStockCode(), totalCost);
 
         // 扣减可用资金，增加冻结资金
         account.setBalance(account.getBalance().subtract(totalCost));
         account.setFrozen(account.getFrozen().add(totalCost));
         accountService.updateAccount(account);
+        
+        return Result.success();
     }
 
     /**
      * 处理卖出订单的资金校验和冻结
      */
-    private void handleSellOrder(Order order) {
+    private Result<String> handleSellOrder(Order order) {
         // 查询持仓
         Position position = positionMapper.selectOne(new LambdaQueryWrapper<Position>()
                 .eq(Position::getUserId, order.getUserId())
@@ -127,20 +143,27 @@ public class TradeServiceImpl implements TradeService {
 
         // 风控校验：是否持有该股票
         if (position == null) {
-            throw new RuntimeException("未持有该股票");
+            return Result.failure("未持有该股票");
         }
 
         // 风控校验：持仓数量是否足够
         if (position.getQuantity() < order.getQuantity()) {
-            throw new RuntimeException("持仓数量不足，当前持有：" + position.getQuantity() + "股");
+            return Result.failure("持仓数量不足，当前持有：" + position.getQuantity() + "股");
         }
 
         BigDecimal totalAmount = order.getPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
 
-        // 卖出时，资金不冻结，直接增加可用资金（先增加，成交后再扣减持仓）
+        // 卖出时，资金不冻结，直接增加可用资金
         Account account = accountService.getAccountWithCache(order.getUserId());
+        
+        if (account == null) {
+            return Result.failure("用户账户不存在");
+        }
+        
         account.setBalance(account.getBalance().add(totalAmount));
         accountService.updateAccount(account);
+        
+        return Result.success();
     }
 
     /**
@@ -194,8 +217,10 @@ public class TradeServiceImpl implements TradeService {
 
         // 解冻资金
         Account account = accountService.getAccountWithCache(order.getUserId());
-        account.setFrozen(account.getFrozen().subtract(totalCost));
-        accountService.updateAccount(account);
+        if (account != null) {
+            account.setFrozen(account.getFrozen().subtract(totalCost));
+            accountService.updateAccount(account);
+        }
     }
 
     /**
@@ -207,7 +232,8 @@ public class TradeServiceImpl implements TradeService {
                 .eq(Position::getStockCode, order.getStockCode()));
 
         if (position == null) {
-            throw new RuntimeException("持仓不存在");
+            log.error("执行卖出交易时持仓不存在，orderId: {}", order.getId());
+            return;
         }
 
         int newQuantity = position.getQuantity() - order.getQuantity();
@@ -221,8 +247,7 @@ public class TradeServiceImpl implements TradeService {
             positionMapper.updateById(position);
         }
 
-        // 注意：卖出时资金已在 handleSellOrder 中增加，这里不需要再处理资金
-        // 如果需要在卖出时记录盈亏，可以在这里计算并保存到订单表
+        // 计算并保存盈亏
         calculateAndSaveProfitLoss(order, position);
     }
 

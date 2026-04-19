@@ -24,11 +24,13 @@ public class TradeController {
     @Operation(summary = "创建交易订单", description = "执行股票买入或卖出操作")
     public Result<String> createOrder(@RequestBody OrderSaveRequest request) {
         try {
-            tradeService.createOrder(request);
-            return Result.success();
-        } catch (Exception e) {
-            log.error("创建订单失败", e);
+            return tradeService.createOrder(request);
+        } catch (RuntimeException e) {
+            log.warn("业务异常: {}", e.getMessage());
             return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("系统异常", e);
+            return Result.failure("系统繁忙，请稍后重试");
         }
     }
 
