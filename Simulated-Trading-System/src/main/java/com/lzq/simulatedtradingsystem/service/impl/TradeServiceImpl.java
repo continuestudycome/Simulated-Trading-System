@@ -197,7 +197,6 @@ public class TradeServiceImpl implements TradeService {
         BigDecimal totalCost = order.getPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
 
         if (position == null) {
-            // 新增持仓
             position = new Position();
             position.setUserId(order.getUserId());
             position.setStockCode(order.getStockCode());
@@ -205,7 +204,6 @@ public class TradeServiceImpl implements TradeService {
             position.setCostPrice(order.getPrice());
             positionMapper.insert(position);
         } else {
-            // 移动平均法更新成本价
             BigDecimal oldTotalValue = position.getCostPrice()
                     .multiply(BigDecimal.valueOf(position.getQuantity()));
             BigDecimal newTotalValue = oldTotalValue.add(totalCost);
@@ -218,7 +216,6 @@ public class TradeServiceImpl implements TradeService {
             positionMapper.updateById(position);
         }
 
-        // 解冻资金
         Account account = accountService.getAccountWithCache(order.getUserId());
         if (account != null) {
             account.setFrozen(account.getFrozen().subtract(totalCost));

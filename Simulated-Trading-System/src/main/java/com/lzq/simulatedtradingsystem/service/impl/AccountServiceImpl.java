@@ -8,10 +8,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
-import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -20,70 +21,59 @@ import java.util.concurrent.TimeUnit;
 public class AccountServiceImpl implements AccountService {
     private final AccountMapper accountMapper;
     private final StringRedisTemplate stringRedisTemplate;
-    private static final ObjectMapper mapper = new ObjectMapper();
 
     private static final String ACCOUNT_CACHE_KEY = "sty:account:";
-    // 空对象缓存标记：用于标识数据库中不存在的用户
-    private static final String EMPTY_ACCOUNT_MARKER = "{}";
-    // 正常账户缓存过期时间：10 分钟
+    private static final String EMPTY_ACCOUNT_MARKER = "empty";
     private static final long NORMAL_CACHE_EXPIRE = 10;
-    // 空对象缓存过期时间：1 分钟（防止缓存穿透，同时避免长时间缓存导致新用户无法注册）
     private static final long EMPTY_CACHE_EXPIRE = 1;
 
-    /**
-     * 根据用户 ID 查询账户信息
-     */
+    private static final String FIELD_ID = "id";
+    private static final String FIELD_USER_ID = "userId";
+    private static final String FIELD_BALANCE = "balance";
+    private static final String FIELD_FROZEN = "frozen";
+    private static final String FIELD_VERSION = "version";
+
     @Override
     public List<Account> findByUserId(Long id) {
         return accountMapper.findByUserId(id);
     }
 
-    /**
-     * 根据用户 ID 在 Redis 查询账户信息，没有就从数据库查询并使用 Redis 缓存
-     * 采用缓存空对象策略解决缓存穿透问题
-     */
     @Override
     public Account getAccountWithCache(Long userId) {
         String key = ACCOUNT_CACHE_KEY + userId;
-        String val = stringRedisTemplate.opsForValue().get(key);
 
-        // 第一步：检查缓存是否存在
-        if (val != null && !val.isEmpty()) {
-            // 第二步：判断是否为空对象标记（缓存穿透防护）
-            if (EMPTY_ACCOUNT_MARKER.equals(val)) {
+        Boolean exists = stringRedisTemplate.hasKey(key);
+        if (Boolean.TRUE.equals(exists)) {
+            String marker = stringRedisTemplate.opsForHash().get(key, "marker") != null 
+                    ? stringRedisTemplate.opsForHash().get(key, "marker").toString() 
+                    : null;
+            
+            if (EMPTY_ACCOUNT_MARKER.equals(marker)) {
                 log.warn("用户 {} 不存在（命中空对象缓存）", userId);
                 return null;
             }
 
-            // 第三步：尝试反序列化正常账户数据
             try {
-                Account account = mapper.readValue(val, Account.class);
-                log.debug("用户 {} 账户信息从缓存加载", userId);
-                return account;
+                Account account = hashToAccount(key);
+                if (account != null) {
+                    log.debug("用户 {} 账户信息从缓存加载", userId);
+                    return account;
+                }
             } catch (Exception e) {
-                log.error("用户 {} 账户缓存反序列化失败，将从数据库查询", userId, e);
-                // 反序列化失败，删除脏缓存，继续从数据库查询
+                log.error("用户 {} 账户缓存读取失败，将从数据库查询", userId, e);
                 stringRedisTemplate.delete(key);
             }
         }
 
-        // 第四步：缓存未命中，查询数据库
         Account account = accountMapper.selectOne(
                 new LambdaQueryWrapper<Account>().eq(Account::getUserId, userId)
         );
 
         if (account != null) {
-            // 第五步：数据库中存在，缓存正常数据
-            try {
-                String json = mapper.writeValueAsString(account);
-                stringRedisTemplate.opsForValue().set(key, json, NORMAL_CACHE_EXPIRE, TimeUnit.MINUTES);
-                log.debug("用户 {} 账户信息已缓存（{} 分钟）", userId, NORMAL_CACHE_EXPIRE);
-            } catch (Exception e) {
-                log.error("用户 {} 账户缓存序列化失败", userId, e);
-            }
+            cacheAccount(key, account);
+            log.debug("用户 {} 账户信息已缓存（{} 分钟）", userId, NORMAL_CACHE_EXPIRE);
         } else {
-            // 第六步：数据库中不存在，缓存空对象标记（防止缓存穿透）
-            stringRedisTemplate.opsForValue().set(key, EMPTY_ACCOUNT_MARKER, EMPTY_CACHE_EXPIRE, TimeUnit.MINUTES);
+            cacheEmptyAccount(key);
             log.warn("用户 {} 不存在，已缓存空对象标记（{} 分钟）", userId, EMPTY_CACHE_EXPIRE);
         }
 
@@ -93,13 +83,67 @@ public class AccountServiceImpl implements AccountService {
     @Override
     public void updateAccount(Account account) {
         accountMapper.updateById(account);
+        
         String key = ACCOUNT_CACHE_KEY + account.getUserId();
         try {
-            String json = mapper.writeValueAsString(account);
-            stringRedisTemplate.opsForValue().set(key, json, NORMAL_CACHE_EXPIRE, TimeUnit.MINUTES);
+            Map<String, String> map = new HashMap<>();
+            map.put(FIELD_ID, account.getId().toString());
+            map.put(FIELD_USER_ID, account.getUserId().toString());
+            map.put(FIELD_BALANCE, account.getBalance().toString());
+            map.put(FIELD_FROZEN, account.getFrozen().toString());
+            map.put(FIELD_VERSION, account.getVersion().toString());
+            
+            stringRedisTemplate.opsForHash().putAll(key, map);
+            stringRedisTemplate.expire(key, NORMAL_CACHE_EXPIRE, TimeUnit.MINUTES);
+            
             log.debug("用户 {} 账户信息更新并刷新缓存", account.getUserId());
         } catch (Exception e) {
             log.error("用户 {} 账户缓存更新失败", account.getUserId(), e);
         }
+    }
+
+    private Account hashToAccount(String key) {
+        Map<Object, Object> entries = stringRedisTemplate.opsForHash().entries(key);
+        
+        if (entries == null || entries.isEmpty()) {
+            return null;
+        }
+
+        Account account = new Account();
+        
+        if (entries.containsKey(FIELD_ID)) {
+            account.setId(Long.parseLong(entries.get(FIELD_ID).toString()));
+        }
+        if (entries.containsKey(FIELD_USER_ID)) {
+            account.setUserId(Long.parseLong(entries.get(FIELD_USER_ID).toString()));
+        }
+        if (entries.containsKey(FIELD_BALANCE)) {
+            account.setBalance(new BigDecimal(entries.get(FIELD_BALANCE).toString()));
+        }
+        if (entries.containsKey(FIELD_FROZEN)) {
+            account.setFrozen(new BigDecimal(entries.get(FIELD_FROZEN).toString()));
+        }
+        if (entries.containsKey(FIELD_VERSION)) {
+            account.setVersion(Integer.parseInt(entries.get(FIELD_VERSION).toString()));
+        }
+        
+        return account;
+    }
+
+    private void cacheAccount(String key, Account account) {
+        Map<String, String> map = new HashMap<>();
+        map.put(FIELD_ID, account.getId().toString());
+        map.put(FIELD_USER_ID, account.getUserId().toString());
+        map.put(FIELD_BALANCE, account.getBalance().toString());
+        map.put(FIELD_FROZEN, account.getFrozen().toString());
+        map.put(FIELD_VERSION, account.getVersion().toString());
+        
+        stringRedisTemplate.opsForHash().putAll(key, map);
+        stringRedisTemplate.expire(key, NORMAL_CACHE_EXPIRE, TimeUnit.MINUTES);
+    }
+
+    private void cacheEmptyAccount(String key) {
+        stringRedisTemplate.opsForHash().put(key, "marker", EMPTY_ACCOUNT_MARKER);
+        stringRedisTemplate.expire(key, EMPTY_CACHE_EXPIRE, TimeUnit.MINUTES);
     }
 }
