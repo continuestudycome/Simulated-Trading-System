@@ -37,14 +37,12 @@ public class TradeServiceImpl implements TradeService {
     @Override
     @Transactional
     public Result<String> createOrder(OrderSaveRequest orderRequest) {
-        // 获取参数
         Long userId = orderRequest.getUserId();
         String stockCode = orderRequest.getStockCode();
         BigDecimal price = orderRequest.getPrice();
         Integer quantity = orderRequest.getQuantity();
-        Integer type = orderRequest.getType(); // 1:买入, 2:卖出
+        Integer type = orderRequest.getType();
 
-        // 参数校验
         if (userId == null || stockCode == null || price == null || quantity == null || type == null) {
             return Result.failure("参数不能为空");
         }
@@ -55,14 +53,12 @@ public class TradeServiceImpl implements TradeService {
             return Result.failure("订单类型错误，1为买入，2为卖出");
         }
 
-        // 检查用户账户是否存在
         Account account = accountService.getAccountWithCache(userId);
         if (account == null) {
             log.warn("用户 {} 不存在，拒绝交易请求", userId);
             return Result.failure("用户账户不存在，请先注册");
         }
 
-        // 创建订单对象
         Order order = new Order();
         order.setId(snowflakeIdGenerator.nextId());
         order.setUserId(userId);
@@ -71,40 +67,45 @@ public class TradeServiceImpl implements TradeService {
         order.setQuantity(quantity);
         order.setType(type);
         order.setCreateTime(LocalDateTime.now());
-        order.setStatus(0); // 0：待处理
+        order.setStatus(0);
 
-        // 分布式锁
         RLock lock = redissonClient.getLock("lock:user:" + userId);
+
+        boolean locked = false;
         try {
-            lock.lock(10, TimeUnit.SECONDS);
+            locked = lock.tryLock(5, TimeUnit.SECONDS);
+            if (!locked) {
+                log.warn("用户 {} 获取分布式锁失败，可能存在并发交易", userId);
+                return Result.failure("系统繁忙，请稍后重试");
+            }
 
             if (type == 1) {
-                // 买入逻辑
                 Result<String> buyResult = handleBuyOrder(order);
                 if (!buyResult.isSuccess()) {
                     return buyResult;
                 }
             } else if (type == 2) {
-                // 卖出逻辑
                 Result<String> sellResult = handleSellOrder(order);
                 if (!sellResult.isSuccess()) {
                     return sellResult;
                 }
             }
 
-            // 保存订单
             orderMapper.insert(order);
 
-            // 执行交易
             executeTrade(order);
 
             return Result.success(type == 1 ? "买入成功" : "卖出成功");
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("获取锁被中断，userId: {}", userId, e);
+            return Result.failure("系统异常，请稍后重试");
         } catch (Exception e) {
-            log.error("订单处理异常", e);
+            log.error("订单处理异常，userId: {}", userId, e);
             return Result.failure("系统异常：" + e.getMessage());
         } finally {
-            if (lock.isHeldByCurrentThread()) {
+            if (locked && lock.isHeldByCurrentThread()) {
                 lock.unlock();
             }
         }
@@ -115,11 +116,11 @@ public class TradeServiceImpl implements TradeService {
      */
     private Result<String> handleBuyOrder(Order order) {
         Account account = accountService.getAccountWithCache(order.getUserId());
-        
+
         if (account == null) {
             return Result.failure("用户账户不存在，请先注册");
         }
-        
+
         BigDecimal totalCost = order.getPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
 
         // 风控校验：资金是否充足
@@ -131,7 +132,7 @@ public class TradeServiceImpl implements TradeService {
         account.setBalance(account.getBalance().subtract(totalCost));
         account.setFrozen(account.getFrozen().add(totalCost));
         accountService.updateAccount(account);
-        
+
         return Result.success();
     }
 
@@ -158,14 +159,14 @@ public class TradeServiceImpl implements TradeService {
 
         // 卖出时，资金不冻结，直接增加可用资金
         Account account = accountService.getAccountWithCache(order.getUserId());
-        
+
         if (account == null) {
             return Result.failure("用户账户不存在");
         }
-        
+
         account.setBalance(account.getBalance().add(totalAmount));
         accountService.updateAccount(account);
-        
+
         return Result.success();
     }
 
